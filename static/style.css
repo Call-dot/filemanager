@@ -1,0 +1,18 @@
+body{font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:0;padding:0;background:#f6f8fa;color:#24292e}
+header{background:#24292e;color:#fff;padding:1rem}
+header h1{margin:0;font-size:1.2rem}
+main{padding:1rem;max-width:1000px;margin:0 auto}
+#repo-form{display:flex;gap:.5rem;flex-wrap:wrap}
+#repo-form input[type=url]{flex:1;min-width:240px;padding:.5rem;border:1px solid #d0d7de;border-radius:6px}
+#repo-form input[type=password]{flex:1;min-width:240px;padding:.5rem;border:1px solid #d0d7de;border-radius:6px}
+#repo-form button{padding:.5rem 1rem;border:none;background:#2ea44f;color:#fff;border-radius:6px;cursor:pointer}
+.listing{margin-top:1rem;border:1px solid #d0d7de;background:#fff;border-radius:6px;padding:.5rem}
+.row{display:flex;align-items:center;gap:.75rem;padding:.4rem .5rem;border-radius:6px}
+.row:hover{background:#f6f8fa}
+.icon{width:1.2rem;text-align:center}
+.name{flex:1}
+.details{color:#57606a;font-size:.85rem}
+.breadcrumb{margin-top:.5rem}
+.file-view{margin-top:1rem;border:1px solid #d0d7de;background:#fff;border-radius:6px;padding:.75rem}
+.hidden{display:none}
+#file-content{white-space:pre-wrap;overflow:auto;max-height:60vh}
