@@ -5,28 +5,50 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>File Manager — GitHub style</title>
   <link rel="stylesheet" href="static/style.css" />
+  <!-- Highlight.js for code syntax highlighting -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css">
 </head>
 <body>
   <header>
-    <h1>File Manager — GitHub style</h1>
-    <p>Enter a GitHub repo URL (e.g. https://github.com/owner/repo) to browse its files.</p>
+    <div class="header-inner">
+      <h1>File Manager</h1>
+      <div class="header-sub">GitHub-style browser — paste a repo URL to explore files</div>
+    </div>
   </header>
 
   <main>
-    <form id="repo-form">
+    <form id="repo-form" class="controls">
       <input id="repo-url" type="url" placeholder="https://github.com/owner/repo" required />
-      <input id="token" type="password" placeholder="Personal access token (optional, required for private repos)" />
-      <button type="submit">Load</button>
+      <input id="token" type="password" placeholder="Personal access token (optional)" />
+      <button type="submit" id="load-btn">Load</button>
     </form>
 
-    <nav id="breadcrumb"></nav>
-    <section id="listing" class="listing"></section>
-    <section id="file-view" class="file-view hidden">
-      <button id="close-file">Close</button>
-      <pre id="file-content"></pre>
-    </section>
+    <div id="status" class="status hidden"></div>
+
+    <nav id="breadcrumb" class="breadcrumb"></nav>
+
+    <div class="content-grid">
+      <aside class="sidebar">
+        <section id="listing" class="listing"></section>
+      </aside>
+
+      <section id="file-panel" class="file-panel hidden">
+        <div class="file-header">
+          <div>
+            <div id="file-name" class="file-name"></div>
+            <div id="file-meta" class="file-meta"></div>
+          </div>
+          <div class="file-actions">
+            <a id="file-download" class="btn" target="_blank" rel="noreferrer">Download</a>
+            <button id="close-file" class="btn">Close</button>
+          </div>
+        </div>
+        <pre id="file-content" class="file-content"><code></code></pre>
+      </section>
+    </div>
   </main>
 
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
   <script src="static/app.js"></script>
 </body>
 </html>

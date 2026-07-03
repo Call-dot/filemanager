@@ -1,14 +1,17 @@
-// Simple GitHub-style file manager that reads from the GitHub REST API
-// Usage: paste a repo URL (https://github.com/:owner/:repo) and press Load.
-
+// Improved client-side logic with better error handling and file viewer UI
 const form = document.getElementById('repo-form');
 const repoUrlInput = document.getElementById('repo-url');
 const tokenInput = document.getElementById('token');
 const listingEl = document.getElementById('listing');
 const breadcrumbEl = document.getElementById('breadcrumb');
-const fileView = document.getElementById('file-view');
+const statusEl = document.getElementById('status');
+const filePanel = document.getElementById('file-panel');
 const fileContentEl = document.getElementById('file-content');
+const fileNameEl = document.getElementById('file-name');
+const fileMetaEl = document.getElementById('file-meta');
+const fileDownload = document.getElementById('file-download');
 const closeFileBtn = document.getElementById('close-file');
+const loadBtn = document.getElementById('load-btn');
 
 let owner = null, repo = null, currentPath = '';
 
@@ -16,13 +19,13 @@ form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const url = repoUrlInput.value.trim();
   const parsed = parseGitHubUrl(url);
-  if (!parsed) return alert('Please enter a valid GitHub repository URL');
+  if (!parsed) return showStatus('Please enter a valid GitHub repository URL', true);
   owner = parsed.owner; repo = parsed.repo; currentPath = '';
   await loadPath('');
 });
 
 closeFileBtn.addEventListener('click', () => {
-  fileView.classList.add('hidden');
+  filePanel.classList.add('hidden');
 });
 
 function parseGitHubUrl(url){
@@ -42,17 +45,33 @@ function apiHeaders(){
   return headers;
 }
 
+function showStatus(msg, isError=false){
+  statusEl.textContent = msg;
+  statusEl.classList.toggle('hidden', false);
+  statusEl.style.borderColor = isError ? '#f0a' : '';
+}
+
+function hideStatus(){ statusEl.classList.add('hidden'); }
+
 async function loadPath(path){
   currentPath = path || '';
   breadcrumbEl.innerHTML = renderBreadcrumb(owner, repo, currentPath);
   const apiPath = currentPath ? `/contents/${encodeURIComponent(currentPath)}` : '/contents';
   const url = `https://api.github.com/repos/${owner}/${repo}${apiPath}`;
   listingEl.innerHTML = '<div class="details">Loading...</div>';
+  setLoading(true);
+  hideStatus();
   try{
     const res = await fetch(url, {headers: apiHeaders()});
     if (res.status === 404) return listingEl.innerHTML = '<div class="details">Not found or access denied (private repo?)</div>';
     if (res.status === 401 || res.status === 403) return listingEl.innerHTML = '<div class="details">Unauthorized or rate-limited. Try a personal access token.</div>';
     const data = await res.json();
+    // If the API returns a file object (object with type:file) when the path is a file, open it directly
+    if (data && !Array.isArray(data) && data.type === 'file'){
+      renderListing([]); // clear listing
+      await openFile(data.path, data);
+      return;
+    }
     if (!Array.isArray(data)){
       listingEl.innerHTML = '<div class="details">Unexpected response from API</div>';
       return;
@@ -60,7 +79,7 @@ async function loadPath(path){
     renderListing(data);
   }catch(err){
     listingEl.innerHTML = `<div class="details">Error: ${err.message}</div>`;
-  }
+  }finally{ setLoading(false); }
 }
 
 function renderBreadcrumb(owner, repo, path){
@@ -82,6 +101,7 @@ function renderListing(items){
     return a.type === 'dir' ? -1 : 1;
   });
   listingEl.innerHTML = '';
+  if (items.length === 0) listingEl.innerHTML = '<div class="details">(empty)</div>';
   items.forEach(it =>{
     const row = document.createElement('div');
     row.className = 'row';
@@ -103,20 +123,37 @@ function renderListing(items){
   });
 }
 
-async function openFile(path){
-  fileView.classList.remove('hidden');
+async function openFile(path, preloadedData=null){
+  filePanel.classList.remove('hidden');
   fileContentEl.textContent = 'Loading...';
-  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`;
+  fileNameEl.textContent = path.split('/').pop();
+  fileMetaEl.textContent = '';
+  fileDownload.href = '#';
   try{
-    const res = await fetch(url, {headers: apiHeaders()});
-    if (!res.ok) return fileContentEl.textContent = `Error: ${res.status} ${res.statusText}`;
-    const data = await res.json();
-    if (data.encoding === 'base64'){
+    let data = preloadedData;
+    if (!data){
+      const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`;
+      const res = await fetch(url, {headers: apiHeaders()});
+      if (!res.ok) return fileContentEl.textContent = `Error: ${res.status} ${res.statusText}`;
+      data = await res.json();
+    }
+    if (data.download_url) fileDownload.href = data.download_url;
+    if (data.size) fileMetaEl.textContent = `${data.size} bytes`;
+
+    // If file is large, offer download rather than rendering inline
+    const LARGE_THRESHOLD = 200 * 1024; // 200 KB
+    if (data.size && data.size > LARGE_THRESHOLD){
+      fileContentEl.textContent = `File is large (${data.size} bytes). Use Download to get the file.`;
+      return;
+    }
+
+    if (data.encoding === 'base64' && data.content){
       const decoded = atob(data.content.replace(/\n/g,''));
-      fileContentEl.textContent = decoded;
+      renderFileContent(decoded, path);
     }else if (data.download_url){
       const raw = await fetch(data.download_url, {headers: apiHeaders()});
-      fileContentEl.textContent = await raw.text();
+      const text = await raw.text();
+      renderFileContent(text, path);
     }else{
       fileContentEl.textContent = JSON.stringify(data, null, 2);
     }
@@ -125,7 +162,29 @@ async function openFile(path){
   }
 }
 
-// Optional: support opening directly with a URL fragment like #owner/repo/path
+function renderFileContent(text, path){
+  // Try to syntax highlight using highlight.js auto-detection
+  try{
+    const ext = path.split('.').pop().toLowerCase();
+    // simple heuristics: if file seems binary (null bytes), don't render
+    if (/\x00/.test(text)){
+      fileContentEl.textContent = 'Binary file — download instead.';
+      return;
+    }
+    // Use highlight.js
+    const highlighted = hljs.highlightAuto(text).value;
+    fileContentEl.innerHTML = '<code class="hljs">'+highlighted+'</code>';
+  }catch(e){
+    fileContentEl.textContent = text;
+  }
+}
+
+function setLoading(isLoading){
+  loadBtn.disabled = isLoading;
+  if (isLoading) loadBtn.textContent = 'Loading...'; else loadBtn.textContent = 'Load';
+}
+
+// Support direct URL fragment like #owner/repo/path
 window.addEventListener('load', ()=>{
   const frag = location.hash.replace(/^#/,'');
   if (!frag) return;
