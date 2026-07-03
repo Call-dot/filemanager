@@ -20,7 +20,9 @@
     <form id="repo-form" class="controls">
       <input id="repo-url" type="url" placeholder="https://github.com/owner/repo" required />
       <input id="token" type="password" placeholder="Personal access token (optional)" />
+      <select id="branch-select" class="branch-select hidden"><option>default branch</option></select>
       <button type="submit" id="load-btn">Load</button>
+      <button type="button" id="embed-btn" class="btn small">Embed</button>
     </form>
 
     <div id="status" class="status hidden"></div>
@@ -29,6 +31,9 @@
 
     <div class="content-grid">
       <aside class="sidebar">
+        <div class="sidebar-controls">
+          <input id="search-input" placeholder="Search files" />
+        </div>
         <section id="listing" class="listing"></section>
       </aside>
 
@@ -47,6 +52,19 @@
       </section>
     </div>
   </main>
+
+  <!-- Embed modal -->
+  <div id="embed-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3>Embed this viewer</h3>
+      <p>Copy and paste this iframe snippet into another site to embed the file manager pointing to the selected repo/branch/path.</p>
+      <textarea id="embed-code" readonly></textarea>
+      <div class="modal-actions">
+        <button id="copy-embed" class="btn">Copy</button>
+        <button id="close-embed" class="btn">Close</button>
+      </div>
+    </div>
+  </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
   <script src="static/app.js"></script>

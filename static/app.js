@@ -1,7 +1,8 @@
-// Improved client-side logic with better error handling and file viewer UI
+// Feature upgrades: branch selector, search, embed code generation, improved error handling
 const form = document.getElementById('repo-form');
 const repoUrlInput = document.getElementById('repo-url');
 const tokenInput = document.getElementById('token');
+const branchSelect = document.getElementById('branch-select');
 const listingEl = document.getElementById('listing');
 const breadcrumbEl = document.getElementById('breadcrumb');
 const statusEl = document.getElementById('status');
@@ -12,8 +13,14 @@ const fileMetaEl = document.getElementById('file-meta');
 const fileDownload = document.getElementById('file-download');
 const closeFileBtn = document.getElementById('close-file');
 const loadBtn = document.getElementById('load-btn');
+const embedBtn = document.getElementById('embed-btn');
+const embedModal = document.getElementById('embed-modal');
+const embedCode = document.getElementById('embed-code');
+const copyEmbed = document.getElementById('copy-embed');
+const closeEmbed = document.getElementById('close-embed');
+const searchInput = document.getElementById('search-input');
 
-let owner = null, repo = null, currentPath = '';
+let owner = null, repo = null, currentPath = '', currentBranch = null;
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -21,11 +28,47 @@ form.addEventListener('submit', async (e) => {
   const parsed = parseGitHubUrl(url);
   if (!parsed) return showStatus('Please enter a valid GitHub repository URL', true);
   owner = parsed.owner; repo = parsed.repo; currentPath = '';
+  currentBranch = null;
+  branchSelect.classList.add('hidden');
+  await loadBranches();
   await loadPath('');
+});
+
+branchSelect.addEventListener('change', ()=>{
+  const val = branchSelect.value;
+  currentBranch = val === 'default' ? null : val;
+  loadPath(currentPath);
 });
 
 closeFileBtn.addEventListener('click', () => {
   filePanel.classList.add('hidden');
+});
+
+embedBtn.addEventListener('click', ()=>{
+  if (!owner || !repo) return showStatus('Load a repository first to generate embed code', true);
+  const site = `${location.origin}${location.pathname}`;
+  const params = new URLSearchParams();
+  params.set('repo', `${owner}/${repo}`);
+  if (currentBranch) params.set('branch', currentBranch);
+  if (currentPath) params.set('path', currentPath);
+  const src = `${site}?${params.toString()}`;
+  const iframe = `<iframe src="${src}" width="100%" height="600" frameborder="0"></iframe>`;
+  embedCode.value = iframe;
+  embedModal.classList.remove('hidden');
+});
+
+copyEmbed.addEventListener('click', async ()=>{
+  try{ await navigator.clipboard.writeText(embedCode.value); showStatus('Copied embed code to clipboard'); }
+  catch(e){ showStatus('Copy failed: '+e.message, true); }
+});
+closeEmbed.addEventListener('click', ()=> embedModal.classList.add('hidden'));
+
+searchInput.addEventListener('input', ()=>{
+  const q = searchInput.value.trim().toLowerCase();
+  Array.from(listingEl.querySelectorAll('.row')).forEach(row=>{
+    const name = row.querySelector('.name').textContent.toLowerCase();
+    row.style.display = name.includes(q) ? '' : 'none';
+  });
 });
 
 function parseGitHubUrl(url){
@@ -35,7 +78,14 @@ function parseGitHubUrl(url){
     const parts = u.pathname.replace(/^\/+|\/+$/g,'').split('/');
     if (parts.length < 2) return null;
     return {owner:parts[0], repo:parts[1]};
-  }catch(e){return null}
+  }catch(e){
+    // allow repo=owner/repo query param
+    if (url.includes('/')){
+      const parts = url.split('/');
+      if (parts.length === 2) return {owner:parts[0], repo:parts[1]};
+    }
+    return null;
+  }
 }
 
 function apiHeaders(){
@@ -53,11 +103,28 @@ function showStatus(msg, isError=false){
 
 function hideStatus(){ statusEl.classList.add('hidden'); }
 
+async function loadBranches(){
+  try{
+    showStatus('Loading branches...');
+    const url = `https://api.github.com/repos/${owner}/${repo}/branches`;
+    const res = await fetch(url, {headers: apiHeaders()});
+    if (!res.ok){ hideStatus(); return; }
+    const data = await res.json();
+    branchSelect.innerHTML = '';
+    const defaultOption = document.createElement('option'); defaultOption.value='default'; defaultOption.textContent='Default branch';
+    branchSelect.appendChild(defaultOption);
+    data.forEach(b=>{ const o = document.createElement('option'); o.value=b.name; o.textContent=b.name; branchSelect.appendChild(o); });
+    branchSelect.classList.remove('hidden');
+    hideStatus();
+  }catch(e){ hideStatus(); }
+}
+
 async function loadPath(path){
   currentPath = path || '';
   breadcrumbEl.innerHTML = renderBreadcrumb(owner, repo, currentPath);
+  const ref = currentBranch ? `?ref=${encodeURIComponent(currentBranch)}` : '';
   const apiPath = currentPath ? `/contents/${encodeURIComponent(currentPath)}` : '/contents';
-  const url = `https://api.github.com/repos/${owner}/${repo}${apiPath}`;
+  const url = `https://api.github.com/repos/${owner}/${repo}${apiPath}${ref}`;
   listingEl.innerHTML = '<div class="details">Loading...</div>';
   setLoading(true);
   hideStatus();
@@ -66,9 +133,8 @@ async function loadPath(path){
     if (res.status === 404) return listingEl.innerHTML = '<div class="details">Not found or access denied (private repo?)</div>';
     if (res.status === 401 || res.status === 403) return listingEl.innerHTML = '<div class="details">Unauthorized or rate-limited. Try a personal access token.</div>';
     const data = await res.json();
-    // If the API returns a file object (object with type:file) when the path is a file, open it directly
     if (data && !Array.isArray(data) && data.type === 'file'){
-      renderListing([]); // clear listing
+      renderListing([]);
       await openFile(data.path, data);
       return;
     }
@@ -95,30 +161,16 @@ breadcrumbEl.addEventListener('click', (e)=>{
 });
 
 function renderListing(items){
-  // Sort: directories first, then files
-  items.sort((a,b)=>{
-    if (a.type === b.type) return a.name.localeCompare(b.name);
-    return a.type === 'dir' ? -1 : 1;
-  });
+  items.sort((a,b)=>{ if (a.type === b.type) return a.name.localeCompare(b.name); return a.type === 'dir' ? -1 : 1; });
   listingEl.innerHTML = '';
   if (items.length === 0) listingEl.innerHTML = '<div class="details">(empty)</div>';
   items.forEach(it =>{
-    const row = document.createElement('div');
-    row.className = 'row';
-    const icon = document.createElement('div'); icon.className='icon';
-    icon.textContent = it.type === 'dir' ? '📁' : '📄';
-    const name = document.createElement('div'); name.className='name';
-    name.textContent = it.name;
-    const details = document.createElement('div'); details.className='details';
-    details.textContent = it.type === 'dir' ? 'Directory' : `${it.size} bytes`;
+    const row = document.createElement('div'); row.className = 'row';
+    const icon = document.createElement('div'); icon.className='icon'; icon.textContent = it.type === 'dir' ? '📁' : '📄';
+    const name = document.createElement('div'); name.className='name'; name.textContent = it.name;
+    const details = document.createElement('div'); details.className='details'; details.textContent = it.type === 'dir' ? 'Directory' : `${it.size} bytes`;
     row.appendChild(icon); row.appendChild(name); row.appendChild(details);
-    row.addEventListener('click', ()=>{
-      if (it.type === 'dir'){
-        loadPath(currentPath ? `${currentPath}/${it.name}` : it.name);
-      }else{
-        openFile(it.path);
-      }
-    });
+    row.addEventListener('click', ()=>{ if (it.type === 'dir'){ loadPath(currentPath ? `${currentPath}/${it.name}` : it.name); }else{ openFile(it.path); } });
     listingEl.appendChild(row);
   });
 }
@@ -132,7 +184,8 @@ async function openFile(path, preloadedData=null){
   try{
     let data = preloadedData;
     if (!data){
-      const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}`;
+      const ref = currentBranch ? `?ref=${encodeURIComponent(currentBranch)}` : '';
+      const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}${ref}`;
       const res = await fetch(url, {headers: apiHeaders()});
       if (!res.ok) return fileContentEl.textContent = `Error: ${res.status} ${res.statusText}`;
       data = await res.json();
@@ -140,12 +193,8 @@ async function openFile(path, preloadedData=null){
     if (data.download_url) fileDownload.href = data.download_url;
     if (data.size) fileMetaEl.textContent = `${data.size} bytes`;
 
-    // If file is large, offer download rather than rendering inline
     const LARGE_THRESHOLD = 200 * 1024; // 200 KB
-    if (data.size && data.size > LARGE_THRESHOLD){
-      fileContentEl.textContent = `File is large (${data.size} bytes). Use Download to get the file.`;
-      return;
-    }
+    if (data.size && data.size > LARGE_THRESHOLD){ fileContentEl.textContent = `File is large (${data.size} bytes). Use Download to get the file.`; return; }
 
     if (data.encoding === 'base64' && data.content){
       const decoded = atob(data.content.replace(/\n/g,''));
@@ -157,42 +206,40 @@ async function openFile(path, preloadedData=null){
     }else{
       fileContentEl.textContent = JSON.stringify(data, null, 2);
     }
-  }catch(err){
-    fileContentEl.textContent = `Error: ${err.message}`;
-  }
+  }catch(err){ fileContentEl.textContent = `Error: ${err.message}`; }
 }
 
 function renderFileContent(text, path){
-  // Try to syntax highlight using highlight.js auto-detection
   try{
-    const ext = path.split('.').pop().toLowerCase();
-    // simple heuristics: if file seems binary (null bytes), don't render
-    if (/\x00/.test(text)){
-      fileContentEl.textContent = 'Binary file — download instead.';
-      return;
-    }
-    // Use highlight.js
+    if (/\x00/.test(text)) { fileContentEl.textContent = 'Binary file — download instead.'; return; }
     const highlighted = hljs.highlightAuto(text).value;
     fileContentEl.innerHTML = '<code class="hljs">'+highlighted+'</code>';
-  }catch(e){
-    fileContentEl.textContent = text;
-  }
+  }catch(e){ fileContentEl.textContent = text; }
 }
 
-function setLoading(isLoading){
-  loadBtn.disabled = isLoading;
-  if (isLoading) loadBtn.textContent = 'Loading...'; else loadBtn.textContent = 'Load';
-}
+function setLoading(isLoading){ loadBtn.disabled = isLoading; if (isLoading) loadBtn.textContent = 'Loading...'; else loadBtn.textContent = 'Load'; }
 
-// Support direct URL fragment like #owner/repo/path
-window.addEventListener('load', ()=>{
-  const frag = location.hash.replace(/^#/,'');
-  if (!frag) return;
-  const parts = frag.split('/');
-  if (parts.length >= 2){
-    owner = parts[0]; repo = parts[1];
-    const path = parts.slice(2).join('/');
-    repoUrlInput.value = `https://github.com/${owner}/${repo}`;
-    loadPath(path);
+// Support query params: ?repo=owner/repo&branch=name&path=some/dir
+window.addEventListener('load', async ()=>{
+  const params = new URLSearchParams(location.search);
+  const repoParam = params.get('repo');
+  const branchParam = params.get('branch');
+  const pathParam = params.get('path');
+  if (repoParam){
+    repoUrlInput.value = `https://github.com/${repoParam}`;
+    if (branchParam) currentBranch = branchParam;
+    await loadBranches();
+    // select branch if provided
+    if (branchParam){
+      const opt = Array.from(branchSelect.options).find(o=>o.value===branchParam);
+      if (opt) branchSelect.value = branchParam;
+    }
+    await loadPath(pathParam || '');
+  } else {
+    // support fragment mode as before
+    const frag = location.hash.replace(/^#/,'');
+    if (!frag) return;
+    const parts = frag.split('/');
+    if (parts.length >= 2){ owner = parts[0]; repo = parts[1]; const path = parts.slice(2).join('/'); repoUrlInput.value = `https://github.com/${owner}/${repo}`; await loadBranches(); loadPath(path); }
   }
 });
