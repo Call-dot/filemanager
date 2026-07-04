@@ -1,6 +1,4 @@
-// Defensive initialization: ensure event listeners are attached after DOM is ready
-// Add runtime error reporting so a single error doesn't stop the entire script
-
+// Defensive initialization with debug instrumentation
 (function(){
   function el(id){
     const e = document.getElementById(id);
@@ -19,7 +17,53 @@
     }
   }
 
+  // Debug instrumentation utilities (visible panel + console logs)
+  function createDebugPanel(){
+    const panel = document.createElement('div');
+    panel.id = 'fm-debug-panel';
+    Object.assign(panel.style, {
+      position: 'fixed',
+      right: '12px',
+      bottom: '12px',
+      width: '320px',
+      maxHeight: '40vh',
+      overflow: 'auto',
+      background: 'rgba(0,0,0,0.8)',
+      color: '#fff',
+      fontSize: '12px',
+      padding: '8px',
+      borderRadius: '6px',
+      zIndex: 99999
+    });
+    const title = document.createElement('div');
+    title.textContent = 'FileManager Debug';
+    Object.assign(title.style, {fontWeight:'700', marginBottom:'6px'});
+    panel.appendChild(title);
+    const clearBtn = document.createElement('button');
+    clearBtn.textContent = 'Clear';
+    Object.assign(clearBtn.style, {float:'right', fontSize:'11px', padding:'2px 6px', marginLeft:'6px'});
+    clearBtn.addEventListener('click', ()=>{ body.innerHTML = ''; });
+    panel.appendChild(clearBtn);
+    const body = document.createElement('div');
+    body.id = 'fm-debug-body';
+    panel.appendChild(body);
+    document.body.appendChild(panel);
+    return body;
+  }
+
+  function dbg(msg){
+    try{ console.debug('[filemanager-debug]', msg); }catch(e){}
+    if (!window.__fm_debug_body) return;
+    const line = document.createElement('div');
+    line.textContent = (new Date()).toISOString() + ' — ' + msg;
+    line.style.marginBottom = '4px';
+    window.__fm_debug_body.appendChild(line);
+  }
+
   document.addEventListener('DOMContentLoaded', safe(()=>{
+    // create debug panel early
+    try{ window.__fm_debug_body = createDebugPanel(); dbg('APP INIT'); }catch(e){ console.warn('debug panel failed', e); }
+
     // DOM elements
     const form = el('repo-form');
     const repoUrlInput = el('repo-url');
@@ -42,18 +86,25 @@
     const closeEmbed = el('close-embed');
     const searchInput = el('search-input');
 
+    dbg('Elements: ' + JSON.stringify({
+      form:!!form, loadBtn:!!loadBtn, embedBtn:!!embedBtn, copyEmbed:!!copyEmbed, closeFileBtn:!!closeFileBtn, searchInput:!!searchInput
+    }));
+
     if (!form || !repoUrlInput || !listingEl || !fileContentEl){
       console.error('[filemanager] critical elements missing, aborting init');
+      dbg('critical elements missing, aborting');
       return;
     }
 
     let owner = null, repo = null, currentPath = '', currentBranch = null;
 
     form.addEventListener('submit', safe(async (e)=>{
+      dbg('submit form');
       e.preventDefault();
       const url = repoUrlInput.value.trim();
+      dbg('repo url: '+url);
       const parsed = parseGitHubUrl(url);
-      if (!parsed) return showStatus('Please enter a valid GitHub repository URL', true);
+      if (!parsed){ dbg('parse failed'); return showStatus('Please enter a valid GitHub repository URL', true); }
       owner = parsed.owner; repo = parsed.repo; currentPath = '';
       currentBranch = null;
       if (branchSelect) branchSelect.classList.add('hidden');
@@ -63,16 +114,18 @@
 
     if (branchSelect){
       branchSelect.addEventListener('change', safe(()=>{
+        dbg('branch change: '+branchSelect.value);
         const val = branchSelect.value;
         currentBranch = val === 'default' ? null : val;
         loadPath(currentPath);
       }));
     }
 
-    if (closeFileBtn) closeFileBtn.addEventListener('click', safe(()=>{ filePanel && filePanel.classList.add('hidden'); }));
+    if (closeFileBtn) closeFileBtn.addEventListener('click', safe(()=>{ dbg('close-file click'); filePanel && filePanel.classList.add('hidden'); }));
 
     if (embedBtn){
       embedBtn.addEventListener('click', safe(()=>{
+        dbg('embed click');
         if (!owner || !repo) return showStatus('Load a repository first to generate embed code', true);
         const site = `${location.origin}${location.pathname}`;
         const params = new URLSearchParams();
@@ -87,13 +140,15 @@
     }
 
     if (copyEmbed) copyEmbed.addEventListener('click', safe(async ()=>{
+      dbg('copy-embed click');
       try{ await navigator.clipboard.writeText(embedCode.value); showStatus('Copied embed code to clipboard'); }
       catch(e){ showStatus('Copy failed: '+e.message, true); }
     }));
-    if (closeEmbed) closeEmbed.addEventListener('click', safe(()=> embedModal && embedModal.classList.add('hidden')));
+    if (closeEmbed) closeEmbed.addEventListener('click', safe(()=>{ dbg('close-embed click'); embedModal && embedModal.classList.add('hidden'); }));
 
     if (searchInput){
       searchInput.addEventListener('input', safe(()=>{
+        dbg('search input: '+searchInput.value);
         const q = searchInput.value.trim().toLowerCase();
         Array.from(listingEl.querySelectorAll('.row')).forEach(row=>{
           const name = (row.querySelector('.name') && row.querySelector('.name').textContent || '').toLowerCase();
@@ -101,6 +156,16 @@
         });
       }));
     }
+
+    // capture clicks globally too to see if events bubble
+    document.addEventListener('click', (ev)=>{
+      try{
+        const t = ev.target;
+        const id = t && t.id ? t.id : null;
+        const cls = t && t.className ? (typeof t.className === 'string' ? t.className : '') : '';
+        if (id || cls){ dbg('global click target id='+id+' class='+cls+' tag='+t.tagName); }
+      }catch(e){}
+    }, true);
 
     function parseGitHubUrl(url){
       try{
@@ -137,7 +202,9 @@
       try{
         showStatus('Loading branches...');
         const url = `https://api.github.com/repos/${owner}/${repo}/branches`;
+        dbg('fetch branches: '+url);
         const res = await fetch(url, {headers: apiHeaders()});
+        dbg('branches response status: '+res.status);
         if (!res.ok){ hideStatus(); return; }
         const data = await res.json();
         if (!branchSelect) return;
@@ -160,7 +227,9 @@
       setLoading(true);
       hideStatus();
       try{
+        dbg('fetch contents: '+url);
         const res = await fetch(url, {headers: apiHeaders()});
+        dbg('contents response status: '+res.status);
         if (res.status === 404) return listingEl && (listingEl.innerHTML = '<div class="details">Not found or access denied (private repo?)</div>');
         if (res.status === 401 || res.status === 403) return listingEl && (listingEl.innerHTML = '<div class="details">Unauthorized or rate-limited. Try a personal access token.</div>');
         const data = await res.json();
@@ -186,6 +255,7 @@
 
     if (breadcrumbEl){
       breadcrumbEl.addEventListener('click', safe((e)=>{
+        dbg('breadcrumb click: '+(e.target && e.target.getAttribute && e.target.getAttribute('data-path')));
         if (e.target.tagName !== 'A') return;
         const p = e.target.getAttribute('data-path');
         loadPath(p);
@@ -203,7 +273,7 @@
         const name = document.createElement('div'); name.className='name'; name.textContent = it.name;
         const details = document.createElement('div'); details.className='details'; details.textContent = it.type === 'dir' ? 'Directory' : `${it.size} bytes`;
         row.appendChild(icon); row.appendChild(name); row.appendChild(details);
-        row.addEventListener('click', safe(()=>{ if (it.type === 'dir'){ loadPath(currentPath ? `${currentPath}/${it.name}` : it.name); }else{ openFile(it.path); } }));
+        row.addEventListener('click', safe(()=>{ dbg('listing row click: '+it.path); if (it.type === 'dir'){ loadPath(currentPath ? `${currentPath}/${it.name}` : it.name); }else{ openFile(it.path); } }));
         listingEl.appendChild(row);
       });
     }
@@ -215,11 +285,14 @@
       if (fileMetaEl) fileMetaEl.textContent = '';
       if (fileDownload) fileDownload.href = '#';
       try{
+        dbg('openFile: '+path);
         let data = preloadedData;
         if (!data){
           const ref = currentBranch ? `?ref=${encodeURIComponent(currentBranch)}` : '';
           const url = `https://api.github.com/repos/${owner}/${repo}/contents/${encodeURIComponent(path)}${ref}`;
+          dbg('fetch file: '+url);
           const res = await fetch(url, {headers: apiHeaders()});
+          dbg('file response status: '+res.status);
           if (!res.ok) return fileContentEl && (fileContentEl.textContent = `Error: ${res.status} ${res.statusText}`);
           data = await res.json();
         }
@@ -283,6 +356,7 @@
     window.addEventListener('error', (ev)=>{
       console.error('[filemanager] window error', ev.error || ev.message);
       if (statusEl) { statusEl.textContent = 'Runtime error: '+(ev.error && ev.error.message || ev.message); statusEl.classList.remove('hidden'); }
+      dbg('window error: '+(ev.error && ev.error.message || ev.message));
     });
 
   }));
